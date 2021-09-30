@@ -39,7 +39,7 @@ contract StakingAndGovernance {
         if (_stakeAmount >= percent.div(100).mul(_stakeAmount)) {
             DSMT.transferFrom(_userAddress, address(this), _stakeAmount);
             stakes[_userAddress] = stakes[_userAddress].add(_stakeAmount);
-            isAdmin(_userAddress);
+            setAdmin(_userAddress);
         } else {
             DSMT.transferFrom(_userAddress, address(this), _stakeAmount);
             stakes[_userAddress] = stakes[_userAddress].add(_stakeAmount);
