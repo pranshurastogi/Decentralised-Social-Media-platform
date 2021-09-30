@@ -17,7 +17,7 @@ contract DSocailMedia {
         bool exists;
     }
 
-    mapping(address => User) users;
+    mapping(address => User[]) users;
 
     function registerUsers(
         string memory _usrName,
@@ -26,20 +26,21 @@ contract DSocailMedia {
         address _userAddress,
         currentStatus _status
     ) public {
-        User memory userDetails = User({
-            usrName: _usrName,
-            name: _name,
-            profileImage: _profileImage,
-            userAddress: _userAddress,
-            status: _status,
-            exists: true //user account created
-        });
-        users[msg.sender] = userDetails;
+      
+    users[msg.sender].push(User(_usrName, _name,_profileImage,_userAddress,_status,true));
+
     }
 
-    function verify(address _userAddress) public view returns (bool) {
-        return
-            users[_userAddress].userAddress ==
-            0x0000000000000000000000000000000000000000;
+    function isUserExists(address _userAddress) public view returns (bool) {
+         User[] storage details = users[_userAddress]; 
+         for(uint i=0; i<details.length; i++){
+               require( details[i].exists == true,"d");
+                     
+                }
+
+         }
     }
-}
+
+
+
+
