@@ -36,7 +36,7 @@ contract StakingAndGovernance {
 
     
     function StakeToken(uint256 _stakeAmount, address _userAddress) public {
-        if (_stakeAmount >= percent.div(100).mul(stakes[_userAddress])) {
+        if (_stakeAmount >= percent.div(100).mul(_stakeAmount)) {
             DSMT.transferFrom(_userAddress, address(this), _stakeAmount);
             stakes[_userAddress] = stakes[_userAddress].add(_stakeAmount);
             isAdmin(_userAddress);
