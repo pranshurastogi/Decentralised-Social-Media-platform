@@ -86,6 +86,18 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
         onlyRole(UPGRADER_ROLE)
         override
     {}
+
+    /// @notice Called by owner to pause, transitons the contract to stopped state
+    /// @dev This function can be accessed by the user with role PAUSER_ROLE
+    function pause() public onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /// @notice Called by owner to unpause, transitons the contract back to normal state
+    /// @dev This function can be accessed by the user with role PAUSER_ROLE
+    function unpause() public onlyRole(PAUSER_ROLE) {
+        _unpause();
+    }
     
     /// @dev Increment and get the counter, which is used as the unique identifier for post
     /// @return The unique identifier
