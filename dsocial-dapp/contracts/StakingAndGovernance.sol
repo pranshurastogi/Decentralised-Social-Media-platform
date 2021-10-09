@@ -74,7 +74,7 @@ contract StakingAndGovernance {
 
     function downVote(uint256 _id) public {
        
-    votes[_id].downVote = votes[_id].downVote.sub(1);
+    votes[_id].downVote = votes[_id].downVote.add(1);
         
     }
 
