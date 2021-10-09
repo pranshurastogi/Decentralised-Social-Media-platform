@@ -1,4 +1,5 @@
-/// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -27,32 +28,9 @@ contract RegisterUser is
         bool exists;
     }
 
-
-
-
-    struct Post {
-        uint id;
-        string description;
-        string content;
-        address creator;
-        uint createDate;
-        bool visible;
-        uint upVote;
-        uint downVote;
-    }
-    
-    Post[] private posts;
-
     mapping(address => User[]) userDetails;
-        mapping(address => Post[]) userPosts;
-    mapping(uint => Post) postById;
 
     event UserAdded(uint256, address);
-      event PostVote(
-        uint indexed postId,
-        address indexed voter,
-        bool upVote
-    );
 
     function initialize() public initializer {
         __Pausable_init();
@@ -115,41 +93,5 @@ contract RegisterUser is
         details.pop();
     }
 
-          function createPost(string memory _description, string memory _contentUri)
-        external
-    {
-        require(bytes(_contentUri).length > 0, "Empty content uri");
-        uint postId = incrementAndGet();
-        Post memory post = Post(postId, _description, _contentUri, msg.sender, block.timestamp, true,0,0);
-
-        posts.push(post);
-        userPosts[msg.sender].push(post);
-        postById[postId] = post;
-
-    }
-   function getPostById(uint _id)
-        external
-        view
-        returns(Post memory)
-    {
-        return postById[_id];
-    }
-        function upVote(uint256 _id) public {
-        
-    postById[_id].upVote = postById[_id].upVote++;
-        
-    }
-
-    function downVote(uint256 _id) public {
-
-    postById[_id].downVote = postById[_id].downVote++;
-        
-    }
-    function getVote(uint256 _id) public view returns(uint) {
-return postById[_id].downVote;
-    }
-
-    function suspendUser() public {
-
-    }
+    function suspendUser() public {}
 }
