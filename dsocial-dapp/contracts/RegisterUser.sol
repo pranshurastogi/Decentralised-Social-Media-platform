@@ -29,6 +29,7 @@ contract RegisterUser is
     }
 
     mapping(address => User[]) userDetails;
+    mapping(string=>bool) private userAlias;
 
     event UserAdded(uint256, address);
 
@@ -65,6 +66,8 @@ contract RegisterUser is
     function RegisterUsers(string memory _profilePic, string memory _alias)
         external
     {
+        require(!userAlias[_alias],"Not avaliable");
+        userAlias[_alias]=true;
         uint256 userId = incrementAndGet();
         userDetails[msg.sender].push(
             User(userId, msg.sender, _profilePic, _alias, true)
