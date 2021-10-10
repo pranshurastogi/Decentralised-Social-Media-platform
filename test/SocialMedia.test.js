@@ -12,6 +12,15 @@ before(async function() {
     [creator] = await ethers.getSigners();
 });
 
+describe("Working with config values", function() {
+    it("Check the initialized config values", async function() {
+        await socialMedia.initialize();
+        expect(await socialMedia.getDownVoteThreshold()).to.equal(5);
+        expect(await socialMedia.getNumberOfExcuses()).to.equal(1);
+        expect(await socialMedia.getSuspensionPeriod()).to.equal(7);
+    });
+});
+
 describe("Working with Post", function() {
     it("Create a post", async function() {
         await socialMedia.createPost("test description", "https://jibrish.ipfs");
@@ -48,7 +57,7 @@ describe("Working with voting", function() {
         expect(vote.downVote).to.equal(1);
     });
 
-    it ("Check the both up vote and own dvote increment", async function() {
+    it ("Check both up vote and own dvote increment", async function() {
         await socialMedia.vote(1, true);
         await socialMedia.vote(1, false);
         const vote = await socialMedia.getVoteByPostId(1);
