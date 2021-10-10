@@ -12,24 +12,34 @@ import "@openzeppelin/contracts-upgradeable/utils/CountersUpgradeable.sol";
 /// @dev This contract keeps track of all the posts created by registered users
 contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgradeable, UUPSUpgradeable {
     using CountersUpgradeable for CountersUpgradeable.Counter;
+    CountersUpgradeable.Counter private _idCounter;
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
-    CountersUpgradeable.Counter private _idCounter;
+
+    uint private downVoteThreshold; 
+    uint private numberOfExcuses;
+    uint private suspensionPeriod;
 
     struct Post {
         uint id;
-        string description;
-        string content;
-        address creator;
         uint createDate;
         bool visible;
+        address creator;
+        string description;
+        string content;
     }
     
     struct Vote {
-        uint id;
+        uint postId;
         uint upVote;
         uint downVote;
+    }
+
+    struct Violation {
+        uint[] postIds;
+        uint count;
+        address postCreator;
     }
     
     Post[] private posts;
@@ -37,29 +47,40 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
     mapping(uint => Post) postById;
     mapping(address => Post[]) userPosts;
     mapping(uint => Vote) voteMap;
+    mapping(address => Violation) postViolation;
 
     /// @notice Emitted when the new post is created
     /// @param postId The unique identifier of post
-    /// @param creator The address of post creator
     /// @param createDate The date of post creation
+    /// @param creator The address of post creator
     /// @param description The description of the post
     /// @param contentUri The IPFS content uri
     event PostAdded(
         uint indexed postId,
-        address indexed creator,
         uint indexed createDate,
+        address indexed creator,
         string description,
         string contentUri
     );
     
     /// @notice Emitted when any post is voted
     /// @param postId The unique identifier of post
-    /// @param voter The address of the voter
     /// @param upVote The kind of vote, true = upVote, false = downVote
+    /// @param voter The address of the voter
     event PostVote(
         uint indexed postId,
-        address indexed voter,
-        bool upVote
+        bool upVote,
+        address indexed voter
+    );
+
+    /// @notice Emitted when any post is reported for violation
+    /// @param postIds The post ids that are considered violated
+    /// @param count The counter tracking the number of violations by user
+    /// @param postCreator The address of the post(s) creator
+    event PostViolation(
+        uint[] postIds,
+        uint indexed count,
+        address indexed postCreator
     );
 
     /// @notice The starting point of the contract, which defines the initial values
@@ -69,6 +90,10 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
         initializer
         public
     {
+        downVoteThreshold = 5;
+        numberOfExcuses = 1;
+        suspensionPeriod = 7;
+
         __Pausable_init();
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -99,6 +124,66 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
         _unpause();
     }
     
+    function getDownVoteThreshold()
+        view
+        public
+        returns (uint)
+    {
+        return downVoteThreshold;
+    }
+
+    /// @notice Function to set down vote threshold
+    /// @dev This function can be accessed by the user with role ADMIN
+    function setDownVoteThreshold(uint _limit)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        downVoteThreshold = _limit;
+    }
+
+    function getNumberOfExcuses()
+        view
+        public
+        returns (uint)
+    {
+        return numberOfExcuses;
+    }
+
+    /// @notice Function to set number of excuses for post violations
+    /// @dev This function can be accessed by the user with role ADMIN
+    function setNumberOfExcuses(uint _excuses)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        numberOfExcuses = _excuses;
+    }
+    
+    function getSuspensionPeriod()
+        view
+        public
+        returns (uint)
+    {
+        return suspensionPeriod;
+    }
+
+    /// @notice Function to set the suspension period in days for each post violation
+    /// @dev This function can be accessed by the user with role ADMIN
+    function setSuspensionPeriod(uint _duration)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        suspensionPeriod = _duration;
+    }
+
+    /// @dev Post mappings to maintain
+    function postOperations(Post memory post) 
+        internal
+    {
+        posts.push(post);
+        userPosts[msg.sender].push(post);
+        postById[post.id] = post;
+    }
+    
     /// @dev Increment and get the counter, which is used as the unique identifier for post
     /// @return The unique identifier
     function incrementAndGet()
@@ -118,13 +203,11 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
     {
         require(bytes(_contentUri).length > 0, "Empty content uri");
         uint postId = incrementAndGet();
-        Post memory post = Post(postId, _description, _contentUri, msg.sender, block.timestamp, true);
+        Post memory post = Post(postId, block.timestamp, true, msg.sender, _description, _contentUri);
 
-        posts.push(post);
-        userPosts[msg.sender].push(post);
-        postById[postId] = post;
-
-        emit PostAdded(postId, msg.sender, block.timestamp, _description, _contentUri);
+        postOperations(post);
+        
+        emit PostAdded(postId, block.timestamp, msg.sender, _description, _contentUri);
     }
     
     /// @notice Fetch the post record by its unique identifier
@@ -161,17 +244,51 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
     
     /// @notice Right to up vote or down vote any posts.
     /// @dev The storage vote instance is matched on identifier and updated with the vote. Emits PostVote event
-    /// @param _id The unique identifier of post
+    /// @param _postId The unique identifier of post
     /// @param _upVote True to upVote, false to downVote
-    function vote(uint _id, bool _upVote)
+    function vote(uint _postId, bool _upVote)
         external
     {
-        Vote storage voteInstance = voteMap[_id];
+        Vote storage voteInstance = voteMap[_postId];
         if(_upVote)
             voteInstance.upVote = voteInstance.upVote++;
         else
             voteInstance.downVote = voteInstance.downVote++;
         
-        emit PostVote(_id, msg.sender, _upVote);
+        emit PostVote(_postId, _upVote, msg.sender);
+    }
+
+    function getVoteByPostId(uint _postId)
+        view
+        external
+        returns (Vote memory)
+    {
+        return voteMap[_postId];
+    }
+
+    function postViolationReport(uint _postId)
+        external
+        returns (uint _suspensionDays, bool ban)
+    {
+        Post memory post = postById[_postId];
+        require(post.id == _postId, "Check the post id");
+
+        Violation storage violation = postViolation[post.creator];
+        violation.postIds.push(_postId);
+        violation.count += 1;
+        violation.postCreator = post.creator;
+
+        post.visible = false;
+        postOperations(post);
+
+        emit PostViolation(violation.postIds, violation.count, violation.postCreator);
+
+        if (violation.count <= numberOfExcuses) {
+            return (suspensionPeriod, false);
+        } else {
+            // ban the user permanently from application
+            // TODO add the user address to blacklist data structure
+            return (0, true);
+        }
     }
 }
