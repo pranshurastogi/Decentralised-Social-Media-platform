@@ -90,10 +90,6 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
         initializer
         public
     {
-        downVoteThreshold = 5;
-        numberOfExcuses = 1;
-        suspensionPeriod = 7;
-
         __Pausable_init();
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -101,8 +97,12 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(PAUSER_ROLE, msg.sender);
         _setupRole(UPGRADER_ROLE, msg.sender);
+
+        downVoteThreshold = 5;
+        numberOfExcuses = 1;
+        suspensionPeriod = 7;
     }
-    
+
     /// @inheritdoc UUPSUpgradeable
     /// @dev The contract upgrade authorization handler. Only the users with role 'UPGRADER_ROLE' are allowed to upgrade the contract
     /// @param newImplementation The address of the new implementation contract
@@ -157,7 +157,7 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
     {
         numberOfExcuses = _excuses;
     }
-    
+
     function getSuspensionPeriod()
         view
         public
@@ -250,10 +250,11 @@ contract SocialMedia is Initializable, PausableUpgradeable, AccessControlUpgrade
         external
     {
         Vote storage voteInstance = voteMap[_postId];
+        voteInstance.postId = _postId;
         if(_upVote)
-            voteInstance.upVote = voteInstance.upVote++;
+            voteInstance.upVote += 1;
         else
-            voteInstance.downVote = voteInstance.downVote++;
+            voteInstance.downVote += 1;
         
         emit PostVote(_postId, _upVote, msg.sender);
     }
