@@ -92,3 +92,17 @@ describe("Working with voting", function() {
         expect(vote.downVote).to.equal(2);
     });
 });
+
+describe("Working with reporting post violation", function() {
+    it("Check the post violation", async function() {
+        await expect(socialMedia.reportPostViolation(10)).to.be.revertedWith("Check the post ID");
+        // not enough down votes
+        await expect(socialMedia.reportPostViolation(1)).to.be.revertedWith("Can not take down the post");
+        // post with id 1 is downvoted twice, do it again to match the threshold
+        await socialMedia.vote(1, false);
+        await socialMedia.reportPostViolation(1);
+        expect(await socialMedia.getPostById(1)).to.have.property('visible', false);
+        const violation = await socialMedia.getPostViolation(1);
+        expect(violation.postIds).to.be.an('array').with.lengthOf(1);
+    });
+});
