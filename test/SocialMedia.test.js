@@ -3,13 +3,14 @@ const { ethers } = require("hardhat");
 
 let socialMedia;
 let creator;
+let testAddr;
 
 before(async function() {
     const contractFactory = await ethers.getContractFactory("SocialMedia");
     socialMedia = await contractFactory.deploy();
     await socialMedia.deployed();
 
-    [creator] = await ethers.getSigners();
+    [creator, testAddr] = await ethers.getSigners();
 });
 
 describe("Working with config values", function() {
@@ -19,9 +20,18 @@ describe("Working with config values", function() {
         expect(await socialMedia.getNumberOfExcuses()).to.equal(1);
         expect(await socialMedia.getSuspensionPeriod()).to.equal(7);
     });
+
+    it("Set config values", async function() {
+        await socialMedia.setDownVoteThreshold(3);
+        expect(await socialMedia.getDownVoteThreshold()).to.equal(3);
+        await socialMedia.setNumberOfExcuses(2);
+        expect(await socialMedia.getNumberOfExcuses()).to.equal(2);
+        await socialMedia.setSuspensionPeriod(14);
+        expect(await socialMedia.getSuspensionPeriod()).to.equal(14);
+    });
 });
 
-describe("Working with Post", function() {
+describe("Working with Post, positive cases", function() {
     it("Create a post", async function() {
         await socialMedia.createPost("test description", "https://jibrish.ipfs");
         expect(await socialMedia.getAllPosts()).to.have.lengthOf(1);        
@@ -39,6 +49,21 @@ describe("Working with Post", function() {
 
     it ("Get all posts", async function() {
         expect(await socialMedia.getAllPosts()).to.have.lengthOf(1);
+    });
+});
+
+describe("Working with Post, negative cases", function() {
+    it("Create a post with no content url", async function() {
+        await expect(socialMedia.createPost("test1 description", "")).to.be.revertedWith('Empty content uri');
+    });
+
+    it("Call postById with non existant post", async function() {
+        expect(await socialMedia.getPostById(5)).to.have.property("content", "");
+    });
+    
+    it ("Get post by non existant user address", async function() {
+        const postArray = await socialMedia.getPostsByUser(testAddr.address);
+        expect(postArray).to.deep.equal([]);
     });
 });
 
