@@ -11,19 +11,18 @@ import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/extensions/ERC721URIStorageUpgradeable.sol";
 import "./ERC20Token.sol";
 
-
 contract NFTPost is
     Initializable,
     AccessControlUpgradeable,
     UUPSUpgradeable,
     ERC721URIStorageUpgradeable
 {
-    using CountersUpgradeable for CountersUpgradeable.Counter;
-    mapping(uint256 => uint256) currentPrice;
-    ERC20 public token;
-    uint256 private upVoteThreshold;
+    CountersUpgradeable.Counter private _idCounter;
 
-        struct Post {
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+
+    struct Post {
         uint256 id;
         uint256 createDate;
         bool visible;
@@ -38,7 +37,7 @@ contract NFTPost is
         uint256 downVote;
     }
 
-        struct User {
+    struct User {
         uint256 userId;
         address userAddress;
         string profilePic;
@@ -46,30 +45,26 @@ contract NFTPost is
         UserStatus status;
     }
 
-        struct Violation {
+    struct Violation {
         uint256[] postIds;
         uint256 count;
         address postCreator;
     }
 
-
     uint256 private downVoteThreshold;
     uint256 private numberOfExcuses;
     uint256 private suspensionPeriod;
+    uint256 private upVoteThreshold;
+    ERC20 public token;
 
-
-
-
-        enum UserStatus {
+    enum UserStatus {
         NotActive,
         Active,
         Suspend
     }
 
+    mapping(uint256 => Post) userById;
 
-mapping(uint=> Post) userById;
-  mapping(address => User) blackList;
- 
     mapping(address => User[]) userDetails;
 
     mapping(string => bool) private userAlias;
@@ -82,6 +77,7 @@ mapping(uint=> Post) userById;
     mapping(address => Post[]) userPosts;
     mapping(uint256 => Vote) voteMap;
     mapping(address => Violation) postViolation;
+    mapping(uint256 => uint256) currentPrice;
 
     /// @notice Emitted when the new post is created
     /// @param postId The unique identifier of post
@@ -112,19 +108,22 @@ mapping(uint=> Post) userById;
         uint256 indexed count,
         address indexed postCreator
     );
-    CountersUpgradeable.Counter private _idCounter;
-
-    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
     function initialize(address _ftAddress) public initializer {
-        __UUPSUpgradeable_init();
+        
         __ERC721_init("NonFungibleToken", "NFT");
         token = ERC20(_ftAddress);
-       _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        __Pausable_init();
+        __AccessControl_init();
+        __UUPSUpgradeable_init();
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(PAUSER_ROLE, msg.sender);
         _setupRole(UPGRADER_ROLE, msg.sender);
 
         upVoteThreshold = 25;
+        downVoteThreshold = 5;
+        numberOfExcuses = 1;
+        suspensionPeriod = 7;
     }
 
     function _authorizeUpgrade(address newImplementation)
@@ -140,6 +139,7 @@ mapping(uint=> Post) userById;
     function unpause() public onlyRole(PAUSER_ROLE) {
         _unpause();
     }
+
     function getupVoteThreshold() public view returns (uint256) {
         return upVoteThreshold;
     }
@@ -199,7 +199,7 @@ mapping(uint=> Post) userById;
         upVoteThreshold = _limit;
     }
 
-     function RegisterUsers(string memory _profilePic, string memory _alias)
+    function RegisterUsers(string memory _profilePic, string memory _alias)
         external
     {
         bool isUser = isUserExists(msg.sender);
@@ -233,8 +233,6 @@ mapping(uint=> Post) userById;
 
         details.pop();
     }
-
-
 
     function vote(uint256 _postId, bool _upVote) external {
         Vote storage voteInstance = voteMap[_postId];
@@ -317,7 +315,7 @@ mapping(uint=> Post) userById;
     {
         Post memory post = postById[_postId];
         User memory users = userById[_postId];
-        address a=userById[_postId].creator;
+        address a = userById[_postId].creator;
         require(post.id == _postId, "Check the post id");
 
         Violation storage violation = postViolation[post.creator];
@@ -338,17 +336,17 @@ mapping(uint=> Post) userById;
             return (suspensionPeriod, false);
         } else {
             delete a;
-            a.status=userStatus.Suspend;
-            
-           
+            a.status = userStatus.Suspend;
+
             return (0, true);
         }
     }
 
-    function mintNFT(string memory tokenURI, uint256 _id,uint256 _amount)
-        public
-        returns (uint256)
-    {
+    function mintNFT(
+        string memory tokenURI,
+        uint256 _id,
+        uint256 _amount
+    ) public returns (uint256) {
         Vote storage voteInstance = voteMap[_id];
 
         require(voteInstance.upVote == upVoteThreshold, "Not enough votes");
@@ -357,7 +355,7 @@ mapping(uint=> Post) userById;
 
         _mint(postById[_id].creator, newItemId);
         _setTokenURI(newItemId, tokenURI);
-        setNftPrice(_id,_amount);
+        setNftPrice(_id, _amount);
         return newItemId;
     }
 
@@ -374,15 +372,15 @@ mapping(uint=> Post) userById;
         return currentPrice[_tokenId];
     }
 
- 
     function setNftPrice(uint256 _tokenId, uint256 _amount) public {
         require(_amount > 0);
         currentPrice[_tokenId] = _amount;
     }
 
-       function buyNFT(uint256 _tokenId, uint256 _amount) public {
+    function buyNFT(uint256 _tokenId, uint256 _amount) public {
         require(_amount == currentPrice[_tokenId]);
-        token.transfer(postById[_tokenId].creator,_amount);
+        token.transfer(postById[_tokenId].creator, _amount);
         safeTransferFrom(postById[_tokenId].creator, msg.sender, _tokenId);
     }
 }
+
