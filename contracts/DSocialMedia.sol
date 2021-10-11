@@ -13,10 +13,12 @@ import "./ERC20Token.sol";
 
 contract NFTPost is
     Initializable,
+    PausableUpgradeable,
     AccessControlUpgradeable,
     UUPSUpgradeable,
     ERC721URIStorageUpgradeable
 {
+    using CountersUpgradeable for CountersUpgradeable.Counter;
     CountersUpgradeable.Counter private _idCounter;
 
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
@@ -109,10 +111,9 @@ contract NFTPost is
         address indexed postCreator
     );
 
-    function initialize(address _ftAddress) public initializer {
-        
+    function initialize(address _tokenAddress) public initializer {
         __ERC721_init("NonFungibleToken", "NFT");
-        token = ERC20(_ftAddress);
+        token = ERC20(_tokenAddress);
         __Pausable_init();
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -126,16 +127,23 @@ contract NFTPost is
         suspensionPeriod = 7;
     }
 
+    /// @inheritdoc UUPSUpgradeable
+    /// @dev The contract upgrade authorization handler. Only the users with role 'UPGRADER_ROLE' are allowed to upgrade the contract
+    /// @param newImplementation The address of the new implementation contract
     function _authorizeUpgrade(address newImplementation)
         internal
         override
         onlyRole(UPGRADER_ROLE)
     {}
 
+    /// @notice Called by owner to pause, transitons the contract to stopped state
+    /// @dev This function can be accessed by the user with role PAUSER_ROLE
     function pause() public onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
+    /// @notice Called by owner to unpause, transitons the contract back to normal state
+    /// @dev This function can be accessed by the user with role PAUSER_ROLE
     function unpause() public onlyRole(PAUSER_ROLE) {
         _unpause();
     }
@@ -155,6 +163,15 @@ contract NFTPost is
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
         downVoteThreshold = _limit;
+    }
+
+    /// @notice Function to set up vote threshold
+    /// @dev This function can be accessed by the user with role ADMIN
+    function setUpVoteThreshold(uint256 _limit)
+        public
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        upVoteThreshold = _limit;
     }
 
     function getNumberOfExcuses() public view returns (uint256) {
@@ -190,15 +207,9 @@ contract NFTPost is
         postById[post.id] = post;
     }
 
-    /// @notice Function to set down vote threshold
-    /// @dev This function can be accessed by the user with role ADMIN
-    function setUpVoteThreshold(uint256 _limit)
-        public
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
-        upVoteThreshold = _limit;
-    }
-
+    /// @notice Emitted when any post is reported for violation
+    /// @param _profilePic Profile image of user, will be stored on ipfs
+    /// @param _alias Alias here is for unique user name
     function RegisterUsers(string memory _profilePic, string memory _alias)
         external
     {
@@ -213,6 +224,8 @@ contract NFTPost is
         emit UserAdded(userId, msg.sender);
     }
 
+    /// @notice Check whethe user exist or not, return boolean value
+    /// @param _userAddress address of the user
     function isUserExists(address _userAddress) public view returns (bool) {
         User[] memory details = userDetails[_userAddress];
         for (uint256 i = 0; i < details.length; i++) {
@@ -221,7 +234,8 @@ contract NFTPost is
         return (false);
     }
 
-    function deleteStruct() public {
+    /// @notice Allows user to delete their info
+    function deleteUsers() public {
         User[] storage details = userDetails[msg.sender];
         User memory deleteUser;
 
@@ -232,13 +246,6 @@ contract NFTPost is
         }
 
         details.pop();
-    }
-
-    function vote(uint256 _postId, bool _upVote) external {
-        Vote storage voteInstance = voteMap[_postId];
-        voteInstance.postId = _postId;
-        if (_upVote) voteInstance.upVote += 1;
-        else voteInstance.downVote += 1;
     }
 
     /// @dev Increment and get the counter, which is used as the unique identifier for post
@@ -301,6 +308,20 @@ contract NFTPost is
         return posts;
     }
 
+    /// @notice Right to up vote or down vote any posts.
+    /// @dev The storage vote instance is matched on identifier and updated with the vote. Emits PostVote event
+    /// @param _postId The unique identifier of post
+    /// @param _upVote True to upVote, false to downVote
+    function vote(uint256 _postId, bool _upVote) external {
+        Vote storage voteInstance = voteMap[_postId];
+        voteInstance.postId = _postId;
+        if (_upVote) voteInstance.upVote += 1;
+        else voteInstance.downVote += 1;
+    }
+
+    /// @notice Fetch the number of votes by post id
+    /// @param _postId The unique identifier of the post
+    /// @return The vote record
     function getVoteByPostId(uint256 _postId)
         external
         view
@@ -314,8 +335,7 @@ contract NFTPost is
         returns (uint256 _suspensionDays, bool ban)
     {
         Post memory post = postById[_postId];
-        User memory users = userById[_postId];
-        address a = userById[_postId].creator;
+
         require(post.id == _postId, "Check the post id");
 
         Violation storage violation = postViolation[post.creator];
@@ -335,13 +355,15 @@ contract NFTPost is
         if (violation.count <= numberOfExcuses) {
             return (suspensionPeriod, false);
         } else {
-            delete a;
-            a.status = userStatus.Suspend;
-
             return (0, true);
         }
     }
 
+    /// @notice Allow user to minf NFT of their post if they get enough upvotes
+    /// @param tokenURI Post metadata (stored on ipfs)
+    /// @param _id The unique identifier of the post
+    /// @param _amount amount to set as price of NFT
+    /// @return The Item id
     function mintNFT(
         string memory tokenURI,
         uint256 _id,
@@ -359,6 +381,7 @@ contract NFTPost is
         return newItemId;
     }
 
+    /// @notice  ERC721Upgradeable and ERC721Upgradeable include supportsInterface so we need to override them.
     function supportsInterface(bytes4 interfaceId)
         public
         view
@@ -369,16 +392,21 @@ contract NFTPost is
     }
 
     function getNftPrice(uint256 _tokenId) public view returns (uint256) {
+        require(_exists(_tokenId));
+
         return currentPrice[_tokenId];
     }
 
-    function setNftPrice(uint256 _tokenId, uint256 _amount) public {
+    function setNftPrice(uint256 _tokenId, uint256 _amount) internal {
+        require(_exists(_tokenId));
+
         require(_amount > 0);
         currentPrice[_tokenId] = _amount;
     }
 
     function buyNFT(uint256 _tokenId, uint256 _amount) public {
-        require(_amount == currentPrice[_tokenId]);
+        require(_exists(_tokenId));
+        require(_amount >= currentPrice[_tokenId]);
         token.transfer(postById[_tokenId].creator, _amount);
         safeTransferFrom(postById[_tokenId].creator, msg.sender, _tokenId);
     }
