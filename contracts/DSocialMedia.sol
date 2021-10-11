@@ -1,17 +1,18 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-
+/// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
-
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/CountersUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/extensions/ERC721URIStorageUpgradeable.sol";
-import "./ERC20Token.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 
-contract NFTPost is
+/// @title SocialMedia
+/// @notice SocialMedia content creation and voting
+/// @dev This contract keeps track of all the posts created by registered users
+contract SocialMedia is
     Initializable,
     PausableUpgradeable,
     AccessControlUpgradeable,
@@ -20,9 +21,30 @@ contract NFTPost is
 {
     using CountersUpgradeable for CountersUpgradeable.Counter;
     CountersUpgradeable.Counter private _idCounter;
+    IERC20Upgradeable public token;
 
-    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+
+    uint256 private upVoteThreshold;
+    uint256 private downVoteThreshold;
+    uint256 private numberOfExcuses;
+    uint256 private suspensionPeriod;
+
+    enum UserStatus {
+        NotActive,
+        banned,
+        Active,
+        Suspend
+    }
+
+    struct User {
+        uint256 userId;
+        address userAddress;
+        string profilePic;
+        string Alias;
+        UserStatus status;
+    }
 
     struct Post {
         uint256 id;
@@ -39,39 +61,18 @@ contract NFTPost is
         uint256 downVote;
     }
 
-    struct User {
-        uint256 userId;
-        address userAddress;
-        string profilePic;
-        string Alias;
-        UserStatus status;
-    }
-
     struct Violation {
         uint256[] postIds;
         uint256 count;
         address postCreator;
     }
 
-    uint256 private downVoteThreshold;
-    uint256 private numberOfExcuses;
-    uint256 private suspensionPeriod;
-    uint256 private upVoteThreshold;
-    ERC20 public token;
-
-    enum UserStatus {
-        NotActive,
-        Active,
-        Suspend
-    }
-
-    mapping(uint256 => Post) userById;
-
-    mapping(address => User[]) userDetails;
-
     mapping(string => bool) private userAlias;
 
-    event UserAdded(uint256, address);
+    mapping(uint256 => User) public userById;
+
+    mapping(address => User) userDetails;
+    mapping(address => User) userByAddress;
 
     Post[] private posts;
 
@@ -79,7 +80,10 @@ contract NFTPost is
     mapping(address => Post[]) userPosts;
     mapping(uint256 => Vote) voteMap;
     mapping(address => Violation) postViolation;
+
     mapping(uint256 => uint256) currentPrice;
+
+    event UserAdded(uint256, address);
 
     /// @notice Emitted when the new post is created
     /// @param postId The unique identifier of post
@@ -104,19 +108,37 @@ contract NFTPost is
     /// @notice Emitted when any post is reported for violation
     /// @param postIds The post ids that are considered violated
     /// @param count The counter tracking the number of violations by user
+    /// @param suspensionDays The number of days user is suspended
+    /// @param banned The flag represents if the user is banned
     /// @param postCreator The address of the post(s) creator
     event PostViolation(
         uint256[] postIds,
         uint256 indexed count,
+        uint256 suspensionDays,
+        bool banned,
         address indexed postCreator
     );
 
-    function initialize(address _tokenAddress) public initializer {
+    modifier onlyRegisteredUser(address _userAddress)  {
+        User memory details = userDetails[_userAddress];
+            require (details.status == UserStatus.Active,"User not registered yet"); 
+        
+         _;
+    }
+
+
+
+    /// @notice The starting point of the contract, which defines the initial values
+    /// @dev This is an upgradeable contract, DO NOT have constructor, and use this function for
+    ///     initialization of this and inheriting contracts
+    function initialize(IERC20Upgradeable _token) public initializer {
+        token = _token;
         __ERC721_init("NonFungibleToken", "NFT");
-        token = ERC20(_tokenAddress);
+
         __Pausable_init();
         __AccessControl_init();
         __UUPSUpgradeable_init();
+
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(PAUSER_ROLE, msg.sender);
         _setupRole(UPGRADER_ROLE, msg.sender);
@@ -148,10 +170,7 @@ contract NFTPost is
         _unpause();
     }
 
-    function getupVoteThreshold() public view returns (uint256) {
-        return upVoteThreshold;
-    }
-
+    /// @notice Function to get the down vote theshold
     function getDownVoteThreshold() public view returns (uint256) {
         return downVoteThreshold;
     }
@@ -165,15 +184,7 @@ contract NFTPost is
         downVoteThreshold = _limit;
     }
 
-    /// @notice Function to set up vote threshold
-    /// @dev This function can be accessed by the user with role ADMIN
-    function setUpVoteThreshold(uint256 _limit)
-        public
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
-        upVoteThreshold = _limit;
-    }
-
+    /// @notice Function to get the number of excuses before the user is permanently banned
     function getNumberOfExcuses() public view returns (uint256) {
         return numberOfExcuses;
     }
@@ -187,6 +198,7 @@ contract NFTPost is
         numberOfExcuses = _excuses;
     }
 
+    /// @notice Function to get the suspension period for user incase of violation
     function getSuspensionPeriod() public view returns (uint256) {
         return suspensionPeriod;
     }
@@ -207,47 +219,6 @@ contract NFTPost is
         postById[post.id] = post;
     }
 
-    /// @notice Emitted when any post is reported for violation
-    /// @param _profilePic Profile image of user, will be stored on ipfs
-    /// @param _alias Alias here is for unique user name
-    function RegisterUsers(string memory _profilePic, string memory _alias)
-        external
-    {
-        bool isUser = isUserExists(msg.sender);
-        require(!isUser, "User already registered");
-        require(!userAlias[_alias], "Not avaliable");
-        userAlias[_alias] = true;
-        uint256 userId = incrementAndGet();
-        userDetails[msg.sender].push(
-            User(userId, msg.sender, _profilePic, _alias, UserStatus.Active)
-        );
-        emit UserAdded(userId, msg.sender);
-    }
-
-    /// @notice Check whethe user exist or not, return boolean value
-    /// @param _userAddress address of the user
-    function isUserExists(address _userAddress) public view returns (bool) {
-        User[] memory details = userDetails[_userAddress];
-        for (uint256 i = 0; i < details.length; i++) {
-            if (details[i].status == UserStatus.Active) return (true);
-        }
-        return (false);
-    }
-
-    /// @notice Allows user to delete their info
-    function deleteUsers() public {
-        User[] storage details = userDetails[msg.sender];
-        User memory deleteUser;
-
-        for (uint256 i = 0; i < details.length; i++) {
-            deleteUser = details[i];
-            details[i] = details[details.length - 1];
-            details[details.length - 1] = deleteUser;
-        }
-
-        details.pop();
-    }
-
     /// @dev Increment and get the counter, which is used as the unique identifier for post
     /// @return The unique identifier
     function incrementAndGet() internal returns (uint256) {
@@ -255,12 +226,56 @@ contract NFTPost is
         return _idCounter.current();
     }
 
+//*************************************RegisterUsers**************************************************//
+
+
+
+    /// @notice Emitted when any post is reported for violation
+    /// @param _profilePic Profile image of user, will be stored on ipfs
+    /// @param _alias Alias here is for unique user name
+    function RegisterUsers(string memory _profilePic, string memory _alias)
+        external 
+    {
+        bool isUser = isUserExists(msg.sender);
+        require(!isUser, "User already registered");
+        require(!userAlias[_alias], "Not avaliable");
+        userAlias[_alias] = true;
+        uint256 userId = incrementAndGet();
+    
+              User memory users = User(
+          userId, msg.sender, _profilePic, _alias, UserStatus.Active
+        );
+        userDetails[msg.sender]=users;
+
+               userById[users.userId] = users;
+
+        emit UserAdded(userId, msg.sender);
+    }
+
+    /// @notice Check whethe user exist or not, return boolean value
+    /// @param _userAddress address of the user
+    function isUserExists(address _userAddress) public view returns (bool) {
+        User memory details = userDetails[_userAddress];
+            if (details.status == UserStatus.Active) return (true);
+        
+        return (false);
+    }
+
+    /// @notice Allows user to delete their info
+    function deleteUsers() public onlyRegisteredUser(msg.sender) {
+  delete userDetails[msg.sender];
+//  userAlias[userDetails[msg.sender].Alias=false;
+    }
+
+    //*************************************CreatePost**************************************************//
+
+
     /// @notice Create a post with any multimedia and description. The multimedia should be stored in external storage and the record pointer to be used
     /// @dev Require a valid and not empty multimedia uri pointer. Emits PostAdded event.
     /// @param _description The description of the uploaded multimedia
     /// @param _contentUri The uri of the multimedia record captured in external storage
     function createPost(string memory _description, string memory _contentUri)
-        external
+        external onlyRegisteredUser(msg.sender)
     {
         require(bytes(_contentUri).length > 0, "Empty content uri");
         uint256 postId = incrementAndGet();
@@ -287,7 +302,7 @@ contract NFTPost is
     /// @notice Fetch the post record by its unique identifier
     /// @param _id The unique identifier of the post
     /// @return The post record
-    function getPostById(uint256 _id) external view returns (Post memory) {
+    function getPostById(uint256 _id) external onlyRegisteredUser(msg.sender) view returns (Post memory) {
         return postById[_id];
     }
 
@@ -304,24 +319,29 @@ contract NFTPost is
 
     /// @notice Fetch all the posts created accross users
     /// @return The list of post records
-    function getAllPosts() external view returns (Post[] memory) {
+    function getAllPosts() external onlyRegisteredUser(msg.sender) view returns (Post[] memory) {
         return posts;
     }
+
+    //*************************************VotingPost**************************************************//
+
 
     /// @notice Right to up vote or down vote any posts.
     /// @dev The storage vote instance is matched on identifier and updated with the vote. Emits PostVote event
     /// @param _postId The unique identifier of post
     /// @param _upVote True to upVote, false to downVote
-    function vote(uint256 _postId, bool _upVote) external {
+    function vote(uint256 _postId, bool _upVote) external onlyRegisteredUser(msg.sender){
         Vote storage voteInstance = voteMap[_postId];
         voteInstance.postId = _postId;
         if (_upVote) voteInstance.upVote += 1;
         else voteInstance.downVote += 1;
+
+        emit PostVote(_postId, _upVote, msg.sender);
     }
 
-    /// @notice Fetch the number of votes by post id
-    /// @param _postId The unique identifier of the post
-    /// @return The vote record
+    /// @notice Function to get the vote details by post ID
+    /// @param _postId Unique identifier of the post
+    /// @return The post's voting information
     function getVoteByPostId(uint256 _postId)
         external
         view
@@ -330,13 +350,38 @@ contract NFTPost is
         return voteMap[_postId];
     }
 
-    function postViolationReport(uint256 _postId)
+    //*************************************PostViolation**************************************************//
+
+
+    /// @notice Function to get the violation report of a post
+    /// @param _postId Unique identifier of the post
+    /// @return The post violation report
+    function getPostViolation(uint256 _postId)
         external
-        returns (uint256 _suspensionDays, bool ban)
+        view
+        returns (Violation memory)
+    {
+        return postViolation[postById[_postId].creator];
+    }
+
+    /// @notice Function to report the post violation
+    /// @dev Require a valid post ID and the number of down votes should be equal or exceeds the threshold
+    /// @param _postId Unique identifier of the post
+    /// @return suspensionDays The number of days user is suspended for the violation
+    /// @return ban If true, user is permanently banned from the application
+    function reportPostViolation(uint256 _postId)
+        external
+        returns (uint256 suspensionDays, bool ban)
     {
         Post memory post = postById[_postId];
 
-        require(post.id == _postId, "Check the post id");
+        require(post.id == _postId, "Check the post ID");
+
+        Vote memory postVote = voteMap[_postId];
+        require(
+            postVote.downVote >= downVoteThreshold,
+            "Can not take down the post"
+        );
 
         Violation storage violation = postViolation[post.creator];
         violation.postIds.push(_postId);
@@ -346,18 +391,35 @@ contract NFTPost is
         post.visible = false;
         postOperations(post);
 
-        emit PostViolation(
-            violation.postIds,
-            violation.count,
-            violation.postCreator
-        );
-
         if (violation.count <= numberOfExcuses) {
+               
+            userDetails[post.creator].status = UserStatus.Suspend;
+
+            emit PostViolation(
+                violation.postIds,
+                violation.count,
+                suspensionPeriod,
+                false,
+                violation.postCreator
+            );
             return (suspensionPeriod, false);
         } else {
+            delete userByAddress[post.creator];
+            userDetails[post.creator].status = UserStatus.banned;
+            
+            emit PostViolation(
+                violation.postIds,
+                violation.count,
+                0,
+                true,
+                violation.postCreator
+            );
             return (0, true);
         }
     }
+
+    //*************************************MintingNFTPost**************************************************//
+
 
     /// @notice Allow user to minf NFT of their post if they get enough upvotes
     /// @param tokenURI Post metadata (stored on ipfs)
@@ -370,7 +432,8 @@ contract NFTPost is
         uint256 _amount
     ) public returns (uint256) {
         Vote storage voteInstance = voteMap[_id];
-
+        require(_amount > 0);
+        require(msg.sender == postById[_id].creator);
         require(voteInstance.upVote == upVoteThreshold, "Not enough votes");
         _idCounter.increment();
         uint256 newItemId = _idCounter.current();
@@ -397,6 +460,9 @@ contract NFTPost is
         return currentPrice[_tokenId];
     }
 
+    /// @notice set the price of the NFT post
+    /// @param _tokenId The unique identifier of the NFT post
+    /// @param _amount amount to set as price of NFT
     function setNftPrice(uint256 _tokenId, uint256 _amount) internal {
         require(_exists(_tokenId));
 
@@ -404,6 +470,9 @@ contract NFTPost is
         currentPrice[_tokenId] = _amount;
     }
 
+    /// @notice Allow users to buy the NFT
+    /// @param _tokenId The unique identifier of the NFT post
+    /// @param _amount amount to pay for the NFT
     function buyNFT(uint256 _tokenId, uint256 _amount) public {
         require(_exists(_tokenId));
         require(_amount >= currentPrice[_tokenId]);
@@ -411,4 +480,3 @@ contract NFTPost is
         safeTransferFrom(postById[_tokenId].creator, msg.sender, _tokenId);
     }
 }
-
